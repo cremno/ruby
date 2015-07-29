@@ -3251,4 +3251,12 @@ End
       end
     end
   end if File::BINARY != 0
+
+  def test_exclusive_mode
+    make_tempfile do |t|
+      assert_raise(Errno::EEXIST){ open(t.path, 'wx'){} }
+      assert_raise(ArgumentError){ open(t.path, 'rx'){} }
+      assert_raise(ArgumentError){ open(t.path, 'ax'){} }
+    end
+  end
 end

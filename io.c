@@ -1360,6 +1360,11 @@ io_binwrite(VALUE str, const char *ptr, long len, rb_io_t *fptr, int nosync)
 
 # define MODE_BTMODE(a,b,c) ((fmode & FMODE_BINMODE) ? (b) : \
                              (fmode & FMODE_TEXTMODE) ? (c) : (a))
+
+#define MODE_BTXMODE(a, b, c, d ,e, f) ((fmode & FMODE_EXCL) ? \
+                                        MODE_BTMODE(d, e, f) : \
+                                        MODE_BTMODE(a, b, c))
+
 static VALUE
 do_writeconv(VALUE str, rb_io_t *fptr, int *converted)
 {
@@ -4872,10 +4877,10 @@ rb_io_fmode_modestr(int fmode)
       case FMODE_READABLE:
 	return MODE_BTMODE("r", "rb", "rt");
       case FMODE_WRITABLE:
-	return MODE_BTMODE("w", "wb", "wt");
+	return MODE_BTXMODE("w", "wb", "wt", "wx", "wbx", "wtx");
       case FMODE_READWRITE:
 	if (fmode & FMODE_CREATE) {
-	    return MODE_BTMODE("w+", "wb+", "wt+");
+	    return MODE_BTXMODE("w+", "wb+", "wt+", "w+x", "wb+x", "wt+x");
 	}
 	return MODE_BTMODE("r+", "rb+", "rt+");
     }
@@ -4921,6 +4926,11 @@ rb_io_modestr_fmode(const char *modestr)
 	  case '+':
             fmode |= FMODE_READWRITE;
             break;
+	  case 'x':
+	    if (modestr[0] != 'w')
+		goto error;
+	    fmode |= FMODE_EXCL;
+	    break;
 	  default:
             goto error;
 	  case ':':
@@ -4964,6 +4974,9 @@ rb_io_oflags_fmode(int oflags)
     if (oflags & O_CREAT) {
 	fmode |= FMODE_CREATE;
     }
+    if (oflags & O_EXCL) {
+	fmode |= FMODE_EXCL;
+    }
 #ifdef O_BINARY
     if (oflags & O_BINARY) {
 	fmode |= FMODE_BINMODE;
@@ -4999,6 +5012,9 @@ rb_io_fmode_oflags(int fmode)
     if (fmode & FMODE_CREATE) {
         oflags |= O_CREAT;
     }
+    if (fmode & FMODE_EXCL) {
+        oflags |= O_EXCL;
+    }
 #ifdef O_BINARY
     if (fmode & FMODE_BINMODE) {
         oflags |= O_BINARY;
@@ -5022,7 +5038,11 @@ rb_io_oflags_modestr(int oflags)
 #else
 # define MODE_BINARY(a,b) (a)
 #endif
-    int accmode = oflags & (O_RDONLY|O_WRONLY|O_RDWR);
+    int accmode;
+    if (oflags & O_EXCL) {
+	rb_raise(rb_eArgError, "exclusive access mode is not supported");
+    }
+    accmode = oflags & (O_RDONLY|O_WRONLY|O_RDWR);
     if (oflags & O_APPEND) {
 	if (accmode == O_WRONLY) {
 	    return MODE_BINARY("a", "ab");
@@ -5031,7 +5051,7 @@ rb_io_oflags_modestr(int oflags)
 	    return MODE_BINARY("a+", "ab+");
 	}
     }
-    switch (oflags & (O_RDONLY|O_WRONLY|O_RDWR)) {
+    switch (accmode) {
       default:
 	rb_raise(rb_eArgError, "invalid access oflags 0x%x", oflags);
       case O_RDONLY:
@@ -7495,6 +7515,10 @@ rb_io_make_open_file(VALUE obj)
  *  	     specified.
  *
  *  	"t"  Text file mode
+ *
+ *  The exclusive access mode ("x") can be used together with "w" to ensure
+ *  the file is created. <code>Errno::EEXIST</code> is raised when it already
+ *  exists. It may not be supported with all kinds of streams (e.g. pipes).
  *
  *  When the open mode of original IO is read only, the mode cannot be
  *  changed to be writable.  Similarly, the open mode cannot be changed from
